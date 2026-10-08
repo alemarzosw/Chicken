@@ -12,7 +12,7 @@ it fits, Chicken treats GPU memory as a resource to be scheduled:
 - **Fast answers.** A small, fast model decides what happens next; bigger models are called only when the task needs them.
 - **Quantized models.** Every model runs fully on the GPU, never split onto the CPU.
 
-The architecture is described in [docs/DESIGN.md](docs/DESIGN.md).
+The full design (memory budget and limit, auto-eject and inject, compaction, the loops and their limits) is in [docs/Chicken_design.md](docs/Chicken_design.md).
 
 ## Models: tuned for a 12 GB GPU, yours to change
 

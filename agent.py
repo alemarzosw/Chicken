@@ -6083,7 +6083,7 @@ def main():
         return
 
     if not HAVE_PT:
-        sys.exit("chicken needs prompt_toolkit: ~/agent/.venv/bin/pip install prompt_toolkit")
+        sys.exit("chicken needs prompt_toolkit: run ./install.sh, or pip install -r requirements.txt")
     repl = Repl(agent)
     if prompt and args.loop:
         prompt = "/loop " + prompt
