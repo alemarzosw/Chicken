@@ -14,6 +14,14 @@ it fits, Chicken treats GPU memory as a resource to be scheduled:
 
 The full design (memory budget and limit, auto-eject and inject, compaction, the loops and their limits) is in [docs/Chicken_design.md](docs/Chicken_design.md).
 
+## Chicken in 2 minutes
+
+[![Chicken: the right intelligence for every task (video, 2:17)](docs/media/chicken_story.png)](docs/media/chicken_story.mp4)
+
+[Watch the video](docs/media/chicken_story.mp4) (2:17, 1080p, music only): why Chicken was born, the problem with
+one GPU, quantized models, the key idea (a small model decides, a specialist does the work), eject and inject,
+checked results and bounded loops, the knowledge wikis, and open source.
+
 ## Models: fitted to the hardware
 
 Chicken is not a search for the best model. It is a way to **run a whole workflow inside the memory you have**:
@@ -30,7 +38,7 @@ The GPU limit is 90% of the card, about 11.6 GB.
 |---|---|---|---|---|---|---|---|---|---|---|
 | `qwen3.5:4b` | orchestrator | Q4_K_M | 3.4 GB | 2.1 GB | 262k | 141k | up to 32k | 83 tok/s | 7.8 s | not published |
 | `bonsai2:27b` | planner, hard work, escalation | ternary, 1.76 bits/weight | 5.95 GB | 6.7 GB | 262k | 80k | all that fits | 28 tok/s | 6.7 s | **98.2%** of Qwen3.8-27B ¹ |
-| `qwen2.5-coder:14b` | coder (writer) | Q4_K_M | 9.0 GB | 9.5 GB | 32k | 27k | up to 64k | 35 tok/s | 10.8 s | not published |
+| `qwen2.5-coder:14b` | coding specialist (run as a writer) | Q4_K_M | 9.0 GB | 9.5 GB | 32k | 27k | up to 64k | 35 tok/s | 10.8 s | not published |
 | `gemma3:12b` | vision | Q4_K_M | 8.2 GB | 7.8 GB | 128k | 25k | up to 64k | 39 tok/s | 10.0 s | not published |
 | `qwen2.5:7b` | summarizer | Q4_K_M | 4.7 GB | 4.9 GB | 32k | 32k | up to 64k | 67 tok/s | 6.5 s | not published ³ |
 | `glm-ocr` | OCR | F16 (full precision) | 2.2 GB | 2.0 GB | 128k | 128k | role setting | – | – | 100% (not quantized) |
@@ -66,8 +74,8 @@ The GPU limit is 90% of the card, about 11.6 GB.
   keeps a context cache, so it gets about 80k tokens of context alone under the limit. A 14B Q4 model in the same
   space gets about 29k.
 - That leaves room for the orchestrator (2.1 GB) or the `/btw` model (0.9 GB) beside it, so most steps need no swap.
-- The 14B specialists (coder, vision) don't fit beside the heavy model; they run alone and the main agent is ejected
-  and injected back, at the cost of the load times above.
+- The bigger specialists (the 14B coding model, the 12B vision model) don't fit beside the heavy model; they run
+  alone and the main agent is ejected and injected back, at the cost of the load times above.
 
 On another card the same logic picks a different lineup. Bonsai 2 27B vs Qwen3 14B on our own coding tests, on this card:
 
@@ -195,6 +203,8 @@ Inside the agent, what you type is coloured: `/commands` in blue, `-flags` in pi
 Type what you want in normal language, in Italian or English.
 
 ### The screen
+
+An example in `classic` mode, where the main model works itself:
 
 ```
  qwen3:14b · ~/project · ctx 12% (2.9k/25k) · RAM 11.2/32GB · GPU 52°C VRAM 10.5/12GB · temp 0.6 · 32.7 tok/s
@@ -415,7 +425,7 @@ The conversation is autosaved after every step (`/load last`).
 
 ### Bonsai 2 27B (optional main model)
 
-`bonsai2:27b` is PrismML's 1.75-bit version of Qwen3.8-27B. Ollama can't run it, so Chicken starts PrismML's own
+`bonsai2:27b` is PrismML's ternary version of Qwen3.8-27B (1.76 effective bits per weight). Ollama can't run it, so Chicken starts PrismML's own
 llama.cpp server when the model is needed, stops it to make room in the GPU, and stops it when you quit.
 Pick it with `/model bonsai2:27b` (as the main agent) or in the `/agents` table (as a helper).
 
@@ -433,9 +443,13 @@ Other llama.cpp-served models can be added under `servers` in `~/.agent/config.j
 
 ### Helpers (multi-agent)
 
-Chicken, the main agent (the **boss**, qwen3:14b), can hand a step to a **helper** that starts with an empty memory. The helper
-does the step and returns a short result. The boss checks it and decides what's next: another helper, the same helper
-again with what to fix, or the answer to you. Each result is passed on to the next helper.
+Workers are called **helpers** in the interface. In the default `orchestrator` mode the orchestrator calls them (see
+[Orchestrator](#orchestrator-default)); in `classic` mode the main agent (the **boss**) works itself and hands steps to
+helpers. Either way a helper starts with an empty memory, does one step and returns a short result, and whoever called
+it decides what's next: another helper, the same helper again with what to fix, or the answer to you. Each result is
+passed on to the next helper.
+
+An example in `classic` mode, with qwen3:14b as the boss and the coder role set to qwen2.5-coder:14b:
 
 ```
 ● chicken  plan
@@ -452,12 +466,15 @@ again with what to fix, or the answer to you. Each result is passed on to the ne
 ✓ Done  2 helpers · one at a time · 58s · …
 ```
 
+The built-in helpers and their default models (the orchestrator may choose another model for a step):
+
 | Helper | Model | Kind | What it does |
 |---|---|---|---|
 | explorer | boss | tool | Maps a folder or project, read only |
 | researcher | boss | tool | Web search, short report with sources |
-| reviewer | boss | tool | Checks work, lists concrete problems, read only |
-| coder | qwen2.5-coder:14b | writer | Writes and changes code |
+| planner | bonsai2:27b | writer | Splits a multi-step goal into ordered steps, never executes them |
+| coder | bonsai2:27b | tool | Writes and changes code, runs it and fixes it |
+| reviewer | bonsai2:27b | tool | Checks work and lists concrete problems; can run existing tests, never changes files |
 | vision | gemma3:12b | writer | Reads images and screenshots |
 | summarizer | qwen2.5:7b | writer | Shrinks long documents (low stakes) |
 
@@ -595,9 +612,13 @@ requirements.txt        prompt_toolkit + requests
 
 ### Good to know
 
-- **Speed:** about 33 tokens/s on a 12 GB RTX 3060. With reasoning on, a simple edit takes about 1 minute. `/think off` is much faster.
-- **Memory:** about 24k tokens (roughly 70 pages). When it fills up, older messages are summarized automatically. For big folders, point it at specific files with `/file`.
-- **Other models:** `/model` opens a picker. `qwen2.5-coder:14b` is good for pure coding. 27B models don't fit in the GPU and run slowly.
+- **Speed:** it depends on the model doing the step: on a 12 GB RTX 3060, from 28 tokens/s (Bonsai) to 83 (the
+  orchestrator) and 273 (the `/btw` model); see the [model sheet](#model-sheet-12-gb-card). With reasoning on, a step
+  takes longer; `/think off` is much faster.
+- **Memory:** the context follows the free GPU memory (`num_ctx: "auto"`). When it passes 72%, older messages are
+  summarized automatically. For big folders, point it at specific files with `/file`.
+- **Other models:** `/model` opens a picker. The orchestrator is only offered models that fit fully under the GPU
+  limit: a 27B model at Q4 doesn't fit in 12 GB, while Bonsai 2 27B does thanks to its ternary weights.
 - **It can make mistakes.** Read the changes it proposes (option 3 lets you correct it), and keep backups of important files.
 - Web search uses DuckDuckGo, with no account or API key needed.
 
