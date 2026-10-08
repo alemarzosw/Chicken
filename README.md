@@ -84,8 +84,8 @@ ollama pull qwen3.5:4b           # the orchestrator; pull the workers you want t
 ```
 
 Bonsai 2 27B and the two small `qwen3.5` models run on llama.cpp: put PrismML's llama.cpp build in
-`~/.local/share/prism-llama/bin/` and the GGUF files in `~/.local/share/prism-llama/models/` (paths and ports are in
-`servers` in the config). Without them, Chicken works with the Ollama models you have.
+`~/.local/share/chicken/llama.cpp/bin/` and the GGUF files in `~/.local/share/chicken/models/` (paths, ports and any
+extra library folder, `libs`, are in `servers` in the config). Without them, Chicken works with the Ollama models you have.
 
 ## Using Chicken
 
@@ -129,7 +129,7 @@ Bonsai 2 27B and the two small `qwen3.5` models run on llama.cpp: put PrismML's 
 | `bonsai-workers` | The orchestrator stays, every worker runs on Bonsai |
 | `classic` | The old Chicken: the main model works itself with all tools and calls helpers |
 
-**Knowledge wikis (optional).** `~/.agent/Built_skills_and_knowledge/` can hold one wiki per subject (one folder each,
+**Knowledge wikis (optional).** `~/.agent/knowledge/` can hold one wiki per subject (one folder each,
 with an `index.md`). Write each page from primary sources and list them on the page.
 - Before each worker starts, Chicken searches the wikis with the worker's task (BM25 keyword search on the CPU, no
   GPU memory) and adds up to 3 clearly relevant sections (max `knowledge_chars`, 6000 characters) with their sources,
@@ -169,7 +169,7 @@ Type what you want in normal language, in Italian or English.
 ### The screen
 
 ```
- qwen3:14b · ~/project · ctx 12% (2.9k/25k) · RAM 11.2/27GB · GPU 52°C VRAM 10.5/12GB · temp 0.6 · 32.7 tok/s
+ qwen3:14b · ~/project · ctx 12% (2.9k/25k) · RAM 11.2/32GB · GPU 52°C VRAM 10.5/12GB · temp 0.6 · 32.7 tok/s
 ❯ add a docstring to greet in hello.py
 • Read hello.py · lines 1-4 of 4
 • Edit hello.py
@@ -180,7 +180,7 @@ Type what you want in normal language, in Italian or English.
   └ Edited hello.py (1 replacement)
 Added a docstring to the greet function.
 ✓ Done  41s · 812 tokens · 32.7 tok/s · ctx 13%
-⠧ Thinking… 7s · 33.3 tok/s · ctx 8% · RAM 3.7/27GB · GPU 56°C · temp 0.6   ctrl+b details · ctrl+c stop
+⠧ Thinking… 7s · 33.3 tok/s · ctx 8% · RAM 3.7/32GB · GPU 56°C · temp 0.6   ctrl+b details · ctrl+c stop
  / commands · ctrl+b details · ctrl+t plan · ctrl+o last output · ctrl+g info · ctrl+c ×2 quit
 ```
 
@@ -282,7 +282,7 @@ If it says "plain Enter", your terminal doesn't send it; use alt+enter or ctrl+j
 | iTerm2 | Settings → Profiles → Keys → Key Mappings → + → Shift+Enter → Send Escape Sequence → `[13;2u` |
 | kitty | kitty.conf: `map shift+enter send_text all \x1b[13;2u` |
 | WezTerm | `keys = { { key = "Enter", mods = "SHIFT", action = wezterm.action.SendString("\x1b[13;2u") } }` |
-| MobaXterm, PuTTY | send a plain Enter; use alt+enter or ctrl+j |
+| PuTTY and similar | send a plain Enter; use alt+enter or ctrl+j |
 
 When Shift+Enter is chosen, alt+enter keeps working as a backup.
 
@@ -311,7 +311,7 @@ When Shift+Enter is chosen, alt+enter keeps working as a backup.
 You can also set one directly with `/setkeyboard plan ctrl+k`. `/setkeyboard reset` restores the defaults.
 Ctrl+C, Ctrl+D, Ctrl+L, Ctrl+Z, Ctrl+S and Ctrl+Q are reserved.
 
-**Clipboard over SSH:** copying uses your terminal's clipboard (OSC 52), which works in Windows Terminal, MobaXterm, iTerm2, kitty, WezTerm and others.
+**Clipboard in remote sessions:** copying uses your terminal's clipboard (OSC 52), which works in Windows Terminal, iTerm2, kitty, WezTerm and others.
 Your terminal's own copy and paste (usually ctrl+shift+c / ctrl+shift+v, or mouse selection) always work too.
 
 ### Permissions (like Claude Code)
@@ -339,7 +339,7 @@ what will change, with line numbers, and asks first:
 Terminal commands work the same way: the full command is shown before it runs, and its output appears live.
 
 **Safety rules built in:**
-- It can only touch files inside your home folder (`root` in the config). `~/.ssh`, `~/.gnupg` and its own config are protected.
+- It can only touch files inside your home folder (`root` in the config). Your key folders (`~/.ssh`, `~/.gnupg`) and its own config are protected: it can never modify them.
 - **Deleted files are not destroyed.** They're moved to `~/.agent/trash/`.
 - In `/loop` mode it asks once whether to auto-approve file edits. Moves, deletions and commands still ask.
 - It auto-corrects a common small-model mistake (re-typing lines that already exist after an edit) and warns you when an edit creates duplicated lines.
@@ -398,8 +398,9 @@ Pick it with `/model bonsai2:27b` (as the main agent) or in the `/agents` table 
 | Speed | 28 tok/s | 34 tok/s |
 | GPU memory at 24k context | 7.4 GB (under the 10 GB budget) | 11.1 GB |
 
-Files: `~/.local/share/prism-llama/bin/` (PrismML's llama.cpp build for CUDA 12.8, using Ollama's CUDA libraries) and
-`~/.local/share/prism-llama/models/Ternary-Bonsai-2-27B-PTQ1_0.gguf` (5.95 GB). Server logs: `~/.agent/servers/`.
+Files: `~/.local/share/chicken/llama.cpp/bin/` (PrismML's llama.cpp build) and
+`~/.local/share/chicken/models/Ternary-Bonsai-2-27B-PTQ1_0.gguf` (5.95 GB). If the build needs CUDA libraries from
+elsewhere (for example Ollama's), add their folder as `libs` in its `servers` entry. Server logs: `~/.agent/servers/`.
 Other llama.cpp-served models can be added under `servers` in `~/.agent/config.json`.
 
 ### Helpers (multi-agent)
@@ -441,7 +442,7 @@ again with what to fix, or the answer to you. Each result is passed on to the ne
 **GPU memory rule:** models stay in the GPU together while their total fits in `vram_budget_gb` (10 GB); otherwise the
 ones the next step doesn't need are ejected, least recently used first. The boss (11.1 GB) and the coder (10.4 GB) are
 each over 10 GB, so they always run alone; swapping takes about 4–11 s. Sizes are measured when a model loads and saved in
-`~/.agent/vram.json`. Ollama is currently set to keep one model loaded at a time (`OLLAMA_MAX_LOADED_MODELS=1`), so small
+`~/.agent/vram.json`. If Ollama is set to keep one model loaded at a time (`OLLAMA_MAX_LOADED_MODELS=1`), small
 models don't share the GPU until that is raised.
 
 **Context follows memory** (`num_ctx: "auto"`): the context is whatever GPU memory the model's weights leave in the
@@ -511,7 +512,7 @@ plus one line per finished page (`[ 67%] ✓ files/test/index.html.md`). Esc sto
 - Logs are stored with gzip, which is lossless and makes them about 3–5× smaller on disk. Older plain `.json` saves still load.
 - On `/load`, outputs that became outdated are trimmed: a file read that was later re-read or changed, a listing,
   search or page fetched again later, long outputs of old actions (start and end kept), and the full text of files written
-  long ago (they're on disk). Nothing the AI can't get back by repeating the action. On the saved sessions here this saved 35–50% of memory.
+  long ago (they're on disk). Nothing the AI can't get back by repeating the action. On real saved sessions this saved 35–50% of memory.
 - The wiki is the strongest compression, but it is a summary written by the local model. Exact details (IDs, numbers)
   can occasionally be lost or merged. Keep a log too when every detail matters.
 
@@ -566,7 +567,7 @@ requirements.txt        prompt_toolkit + requests
 
 ### Good to know
 
-- **Speed:** about 33 tokens/s on the RTX 3060. With reasoning on, a simple edit takes about 1 minute. `/think off` is much faster.
+- **Speed:** about 33 tokens/s on a 12 GB RTX 3060. With reasoning on, a simple edit takes about 1 minute. `/think off` is much faster.
 - **Memory:** about 24k tokens (roughly 70 pages). When it fills up, older messages are summarized automatically. For big folders, point it at specific files with `/file`.
 - **Other models:** `/model` opens a picker. `qwen2.5-coder:14b` is good for pure coding. 27B models don't fit in the GPU and run slowly.
 - **It can make mistakes.** Read the changes it proposes (option 3 lets you correct it), and keep backups of important files.

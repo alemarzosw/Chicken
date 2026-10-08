@@ -116,23 +116,23 @@ DEFAULTS = {
     # models that Ollama can't run, served by a llama.cpp server that Chicken starts and stops itself
     "servers": {
         "bonsai2:27b": {
-            "bin": "~/.local/share/prism-llama/bin/llama-server",
-            "model": "~/.local/share/prism-llama/models/Ternary-Bonsai-2-27B-PTQ1_0.gguf",
-            "libs": "/usr/local/lib/ollama/cuda_v12",
+            "bin": "~/.local/share/chicken/llama.cpp/bin/llama-server",
+            "model": "~/.local/share/chicken/models/Ternary-Bonsai-2-27B-PTQ1_0.gguf",
+            "libs": "",                # extra library folders the llama.cpp build needs (":"-separated), if any
             "port": 8081,
             "description": "Bonsai 2 27B (PrismML, ternary Qwen3.8-27B) · 7.4 GB",
         },
         # small models served by llama.cpp on the GPU
         "qwen3.5:2b": {
-            "bin": "~/.local/share/prism-llama/bin/llama-server",
-            "model": "~/.local/share/prism-llama/models/Qwen3.5-2B-Q4_K_M.gguf",
-            "libs": "/usr/local/lib/ollama/cuda_v12", "port": 8082, "context": 4096,
+            "bin": "~/.local/share/chicken/llama.cpp/bin/llama-server",
+            "model": "~/.local/share/chicken/models/Qwen3.5-2B-Q4_K_M.gguf",
+            "libs": "", "port": 8082, "context": 4096,
             "description": "Qwen3.5 2B on the GPU · trivial tasks",
         },
         "qwen3.5:0.8b": {
-            "bin": "~/.local/share/prism-llama/bin/llama-server",
-            "model": "~/.local/share/prism-llama/models/Qwen3.5-0.8B-Q4_K_M.gguf",
-            "libs": "/usr/local/lib/ollama/cuda_v12", "port": 8083, "context": 4096,
+            "bin": "~/.local/share/chicken/llama.cpp/bin/llama-server",
+            "model": "~/.local/share/chicken/models/Qwen3.5-0.8B-Q4_K_M.gguf",
+            "libs": "", "port": 8083, "context": 4096,
             "description": "Qwen3.5 0.8B on the GPU · /btw",
         },
     },
@@ -491,7 +491,7 @@ def load_tasks():
 # ---------------------------------------------------------------- clipboard
 
 class Clipboard:
-    """Copy via the terminal (OSC 52, works over SSH) and native tools when present."""
+    """Copy via the terminal (OSC 52, works in remote sessions) and native tools when present."""
     text = ""
 
     @staticmethod
@@ -821,7 +821,7 @@ TOOLS = [
         {"query": S("Search query"), "max_results": I("Default 8")}, ["query"]),
     _fn("fetch_url", "Download a web page (or PDF) and return its readable text.",
         {"url": S("URL"), "offset": I("Character offset to continue a long page")}, ["url"]),
-    _fn("search_knowledge", "Search Chicken's knowledge wikis (programming, design, math, energy, physics, security…): "
+    _fn("search_knowledge", "Search Chicken's knowledge wikis (one folder per subject): "
         "returns the most relevant sections with their page and sources. Reference material: the user's files and real "
         "command output take precedence.",
         {"query": S("What you need to know, in English, with key terms"),
@@ -932,7 +932,7 @@ CMDS = [
      "the main model works itself with all tools (the old Chicken). Without an argument it shows the current mode.",
      "/mode auto"),
     ("/knowledge", "[question|auto on|off]", "Chicken's knowledge wikis",
-     "Lists the wikis in ~/.agent/Built_skills_and_knowledge (programming, design, math, energy, physics, security…), "
+     "Lists the wikis in ~/.agent/knowledge (one folder per subject), "
      "or searches them. The most relevant sections are added to every worker's task automatically, with their "
      "sources; '/knowledge auto off' stops that. Tool workers can also search with search_knowledge.",
      "/knowledge css grid layout"),
@@ -980,7 +980,7 @@ CMDS = [
      "(it ejects and injects instead); '/compact auto on' turns it back on (the default).", "/compact auto off"),
     ("/clear", "", "Start a fresh conversation", "Forgets the conversation, plan and loaded files.", "/clear"),
     ("/copy", "", "Copy the AI's last answer to the clipboard",
-     "Copies through your terminal (works over SSH in most terminals: Windows Terminal, MobaXterm, iTerm2, "
+     "Copies through your terminal (works in remote sessions too in most terminals: Windows Terminal, iTerm2, "
      "kitty, WezTerm…). You can also paste it back here with ctrl+v.", "/copy"),
     ("/save", "[-wiki] [name]", "Save as a log, or as a wiki (-wiki)",
      "'/save name' saves the whole conversation as a compressed log (gzip, nothing lost). "
@@ -2231,7 +2231,7 @@ def system_template():
         return SYSTEM_DEFAULT
 
 
-KNOWLEDGE_DIR = CONF_DIR / "Built_skills_and_knowledge"
+KNOWLEDGE_DIR = CONF_DIR / "knowledge"
 _STOP = set("a an and are as at be by can do does for from has have how i if in into is it its of on or that the "
             "this to use using what when which with you your not no all any each more most other some such than "
             "then there these they we will would should could also only just very".split())
@@ -2248,7 +2248,7 @@ def _terms(text):
 
 
 class Knowledge:
-    """The knowledge wikis in ~/.agent/Built_skills_and_knowledge: one folder per wiki, pages split into sections,
+    """The knowledge wikis in ~/.agent/knowledge: one folder per wiki, pages split into sections,
     searched with BM25 (keywords, CPU only). Each hit carries its page's sources."""
 
     def __init__(self, root=KNOWLEDGE_DIR):
