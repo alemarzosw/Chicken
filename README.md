@@ -14,41 +14,69 @@ it fits, Chicken treats GPU memory as a resource to be scheduled:
 
 The full design (memory budget and limit, auto-eject and inject, compaction, the loops and their limits) is in [docs/Chicken_design.md](docs/Chicken_design.md).
 
-## Models: tuned for a 12 GB GPU, yours to change
+## Models: fitted to the hardware
 
-Chicken is optimized with the models below for a **12 GB VRAM** card (developed on an RTX 3060 12 GB, with a 90%
-memory limit). None of them is hard-wired: every model can be replaced to match your hardware (see
-[Using other models](#using-other-models)).
+Chicken is not a search for the best model. It is a way to **run a whole workflow inside the memory you have**:
+a small model routes, one worker at a time gets the GPU, and every model is sized (weights + context) to what is free.
+The lineup below is the one Chicken is tuned with for a **12 GB VRAM** card (developed on an RTX 3060 12 GB); every
+model can be replaced to fit other hardware (see [Using other models](#using-other-models)).
 
-| Role | Default model | Runs on | Why |
-|---|---|---|---|
-| Orchestrator (decides only) | `qwen3.5:4b` | Ollama | Small and fast: routing, plans, structured JSON |
-| Planner, hard coding, review, recovery | `bonsai2:27b` (PrismML Bonsai 2 27B, 1.75-bit ternary Qwen3.8-27B) | llama.cpp (PrismML build) | A 27B model in 7.4 GB: the best results we measured |
-| Coder | `qwen2.5-coder:14b` | Ollama | Code writing, run as a *writer* (Chicken applies its edits) |
-| Vision | `gemma3:12b` | Ollama | Images and screenshots |
-| Summarizer | `qwen2.5:7b` | Ollama | Long documents, low stakes |
-| OCR | `glm-ocr`, `maternion/LightOnOCR-2` | Ollama | Document parsing |
-| Trivial tasks | `qwen3.5:2b` | llama.cpp | Very fast short answers |
-| `/btw` side questions | `qwen3.5:0.8b` | llama.cpp | Read-only, tiny, can stay loaded beside a worker |
-| Classic mode main agent | `qwen3:14b` | Ollama | The model Chicken used before the orchestrator |
+### Model sheet (12 GB card)
 
-### Measured: Bonsai 2 27B vs Qwen3 14B
+Measured on 2026-10-08 on an RTX 3060 12 GB: one model at a time, 8k context, a 300-token answer, thinking off.
+The GPU limit is 90% of the card, about 11.6 GB.
 
-Bonsai 2 27B replaced Qwen3 14B as the model for hard work after this comparison, run on the same 12 GB card at a
-24k-token context:
+| Model | Role | Quantization | Disk | GPU memory at 8k | Native max context | Max context alone under the limit | Context Chicken gives it | Speed (generation) | Load time | Quality vs full precision |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `qwen3.5:4b` | orchestrator | Q4_K_M | 3.4 GB | 2.1 GB | 262k | 141k | up to 32k | 83 tok/s | 7.8 s | not published |
+| `bonsai2:27b` | planner, hard work, escalation | ternary, 1.76 bits/weight | 5.95 GB | 6.7 GB | 262k | 80k | all that fits | 28 tok/s | 6.7 s | **98.2%** of Qwen3.8-27B ¹ |
+| `qwen2.5-coder:14b` | coder (writer) | Q4_K_M | 9.0 GB | 9.5 GB | 32k | 27k | up to 64k | 35 tok/s | 10.8 s | not published |
+| `gemma3:12b` | vision | Q4_K_M | 8.2 GB | 7.8 GB | 128k | 25k | up to 64k | 39 tok/s | 10.0 s | not published |
+| `qwen2.5:7b` | summarizer | Q4_K_M | 4.7 GB | 4.9 GB | 32k | 32k | up to 64k | 67 tok/s | 6.5 s | not published ³ |
+| `glm-ocr` | OCR | F16 (full precision) | 2.2 GB | 2.0 GB | 128k | 128k | role setting | – | – | 100% (not quantized) |
+| `maternion/LightOnOCR-2` | OCR fallback | Q8_0 | 1.5 GB | – | 16k | – | role setting | – | – | not published |
+| `deepseek-r1:8b` | math, step-by-step | Q4_K_M | 5.2 GB | 5.8 GB | 128k | 80k | up to 64k | 59 tok/s | 6.2 s | not published |
+| `llama3.2:3b` | trivial tasks | Q4_K_M | 2.0 GB | 2.7 GB | 128k | 128k | up to 64k | 126 tok/s | 3.8 s | not published |
+| `qwen3.5:2b` | trivial tasks | Q4_K_M | 1.3 GB | 1.6 GB | 262k | 262k | 4k | 176 tok/s | 2.1 s | not published |
+| `qwen3.5:0.8b` | `/btw` side questions | Q4_K_M | 0.53 GB | 0.9 GB | 262k | 262k | 4k | 273 tok/s | 1.2 s | not published |
+| `qwen3:14b` | main agent in `classic` mode | Q4_K_M | 9.3 GB | 9.7 GB | 40k | 29k | all that fits | 34 tok/s | 4.1 s | **≈98.6%** (MMLU, 4-bit) ² |
+
+- **GPU memory** and **max context alone** come from Chicken's own memory model (section 5 of the design), corrected
+  with measured sizes. "Max context alone" is the context the model would get with the whole limit to itself; inside a
+  workflow it gets less when another model shares the card.
+- **Context out:** every answer, reasoning included, is capped by Chicken at `max_answer_tokens` = 8192 tokens
+  (16384 when reasoning is on for a llama.cpp model); `/btw` answers at 600. The models themselves could write more.
+- **Speed** is generation speed; reading a prompt is much faster (hundreds of tokens per second on all of them).
+  Load time is the cost of a swap, which is why Chicken keeps models beside each other whenever they fit.
+- **Quality vs full precision** is what quantization keeps of the same model at full precision. Only published,
+  primary figures are listed:
+  1. PrismML, [Bonsai 2 27B](https://prismml.com/news/bonsai-2-27b): 83.9 vs 85.4 overall for Qwen3.8 27B on a
+     20-benchmark suite in thinking mode (vendor-run). 5.9 GB instead of a 9× larger full-precision model.
+  2. Zheng et al., [An Empirical Study of Qwen3 Quantization](https://arxiv.org/abs/2505.02214), Table 4: Qwen3-14B
+     MMLU 77.4 (4-bit GPTQ, group 128) vs 78.5 (FP16); zero-shot average 73.8 vs 74.4. That is GPTQ, not Ollama's
+     Q4_K_M, so read it as indicative. The same table gives Qwen3-4B 67.6 vs 69.7 (97%): smaller models lose more.
+  3. Qwen publishes no figure for Qwen2.5; for Qwen2-7B-Instruct the [Qwen docs](https://qwen.readthedocs.io/en/v2.5/benchmark/quantization_benchmark.html)
+     give a 64.1 average at GPTQ-Int4 vs 66.9 at BF16 (96%).
+
+  "Not published" means no primary source gives that model's quantized-vs-full figure; nothing is estimated in its place.
+
+### Why this lineup fits 12 GB
+
+- The heavy model is a 27B-class model in 6.7 GB thanks to ternary weights, and as a hybrid model only 1 layer in 4
+  keeps a context cache, so it gets about 80k tokens of context alone under the limit. A 14B Q4 model in the same
+  space gets about 29k.
+- That leaves room for the orchestrator (2.1 GB) or the `/btw` model (0.9 GB) beside it, so most steps need no swap.
+- The 14B specialists (coder, vision) don't fit beside the heavy model; they run alone and the main agent is ejected
+  and injected back, at the cost of the load times above.
+
+On another card the same logic picks a different lineup. Bonsai 2 27B vs Qwen3 14B on our own coding tests, on this card:
 
 | | bonsai2:27b | qwen3:14b |
 |---|---|---|
-| Hard coding tasks (4, graded by tests), fast | **4/4** in 74 s | 2/4 in 27 s |
-| Hard coding tasks (4, graded by tests), reasoning on | **4/4** in 269 s | 3/4 in 781 s |
-| Tool calls | 5/5 | 5/5 |
-| Read → edit loops | 3/3 | 3/3 |
-| Speed | 28 tok/s | 34 tok/s |
-| GPU memory at 24k context | **7.4 GB** | 11.1 GB |
-
-Bonsai solved every task while using a third less memory than the 14B model, which is what makes room for the
-orchestrator and the small models beside it. Alone in a 10 GB budget it gets about 57k tokens of context (only 1 layer
-in 4 keeps a context cache), against about 11k for qwen3:14b.
+| Hard coding tasks (4, graded by tests), fast | 4/4 in 74 s | 2/4 in 27 s |
+| Hard coding tasks (4, graded by tests), reasoning on | 4/4 in 269 s | 3/4 in 781 s |
+| Tool calls · read→edit loops | 5/5 · 3/3 | 5/5 · 3/3 |
+| GPU memory at 24k context | 7.4 GB | 11.1 GB |
 
 ### Using other models
 
@@ -396,7 +424,7 @@ Pick it with `/model bonsai2:27b` (as the main agent) or in the `/agents` table 
 | Hard coding tasks (4, graded by tests) | 4/4 fast (74 s) · 4/4 reasoning (269 s) | 2/4 fast (27 s) · 3/4 reasoning (781 s) |
 | Tool calls · read→edit loops | 5/5 · 3/3 | 5/5 · 3/3 |
 | Speed | 28 tok/s | 34 tok/s |
-| GPU memory at 24k context | 7.4 GB (under the 10 GB budget) | 11.1 GB |
+| GPU memory at 24k context | 7.4 GB | 11.1 GB |
 
 Files: `~/.local/share/chicken/llama.cpp/bin/` (PrismML's llama.cpp build) and
 `~/.local/share/chicken/models/Ternary-Bonsai-2-27B-PTQ1_0.gguf` (5.95 GB). If the build needs CUDA libraries from
@@ -439,16 +467,16 @@ again with what to fix, or the answer to you. Each result is passed on to the ne
 - **boss** as a model means the same model as the main agent, so there's no GPU swap, just a fresh memory.
 - Models never manage anything. The program moves them in and out of the GPU, saves the boss's state and passes results along.
 
-**GPU memory rule:** models stay in the GPU together while their total fits in `vram_budget_gb` (10 GB); otherwise the
-ones the next step doesn't need are ejected, least recently used first. The boss (11.1 GB) and the coder (10.4 GB) are
-each over 10 GB, so they always run alone; swapping takes about 4–11 s. Sizes are measured when a model loads and saved in
+**GPU memory rule:** models stay in the GPU together while their total fits in `vram_budget_gb` (90% of the card, about 11.6 GB on 12 GB); otherwise the
+ones the next step doesn't need are ejected, least recently used first. The 14B models (11.1 GB for qwen3:14b at 24k,
+10.4 GB for the coder at 16k) leave no room for another model, so they run alone; swapping takes about 4–11 s. Sizes are measured when a model loads and saved in
 `~/.agent/vram.json`. If Ollama is set to keep one model loaded at a time (`OLLAMA_MAX_LOADED_MODELS=1`), small
 models don't share the GPU until that is raised.
 
 **Context follows memory** (`num_ctx: "auto"`): the context is whatever GPU memory the model's weights leave in the
 budget. Chicken reads each model's size and context cost per token from its own metadata (Ollama's model info, or the
-GGUF file for llama.cpp servers) and corrects it with measured sizes. Alone in 10 GB, bonsai2:27b gets about 57k tokens
-(it is a hybrid model: only 1 layer in 4 keeps a context cache); qwen3:14b gets about 11k.
+GGUF file for llama.cpp servers) and corrects it with measured sizes. Alone under the 11.6 GB limit, bonsai2:27b gets about
+80k tokens (it is a hybrid model: only 1 layer in 4 keeps a context cache); qwen3:14b gets about 29k.
 
 When a helper on another model is called, Chicken first tries to keep the main agent in the GPU beside it:
 
@@ -461,7 +489,7 @@ Nothing is ever put on the CPU: if Ollama had to place part of a model there, Ch
 
 ```
   ⇄ chicken context 56k → 25k to make room for vision
-  ⇄ loaded glm-ocr:latest (1.9 GB, 4k context) in 5.1s · kept bonsai2:27b (fits in 10 GB)
+  ⇄ loaded glm-ocr:latest (1.9 GB, 4k context) in 5.1s · kept bonsai2:27b (fits in the limit)
   …
   ⇄ ejected glm-ocr:latest · loaded bonsai2:27b (9.9 GB, 56k context) in 3.0s
 ```

@@ -76,6 +76,10 @@ flowchart TD
 
 ## 3. Models and tiers
 
+Chicken is not about picking the best model: it is about running the whole workflow inside the memory the hardware
+has. Models are compute backends that the scheduler fits into memory step by step.
+
+
 Chicken keeps a **capability registry**: for each model, what it is good at, an intelligence level and a speed.
 Roles are not tied to models:
 
@@ -119,11 +123,11 @@ GPU memory is a scheduled resource with one number at its centre: the **limit**.
 limit = vram_budget_gb          "90%" of the card (default) or a number of GB
 ```
 
-On a 12 GB card the default limit is about 10.8 GB. The remaining 10% is headroom for the desktop, drivers and other
-programs.
+A "12 GB" card has 12 GiB, which is 12.9 GB in the decimal units model sizes use, so the default limit is about
+11.6 GB. The remaining 10% is headroom for the desktop, drivers and other programs.
 
 ```text
- 0 GB                                                     limit 10.8      12 GB
+ 0 GB                                                     limit 11.6    12.9 GB
  |█████████████████████████████████▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░│░░░░░░░░░░|
   weights of the loaded models     their context cache   free  ^ headroom
 ```
@@ -164,9 +168,18 @@ The inverse gives the **largest context that fits** in a given amount of memory:
 fit_ctx(model, gb) = (gb − base) / tok      rounded down to a multiple of 1024, capped at the model's maximum
 ```
 
-This is why **context follows memory** (`num_ctx: "auto"`): a model is not given a fixed context, it is given all the
-context its weights leave free under the limit. Bonsai 2 27B, a hybrid model where only 1 layer in 4 keeps a cache,
-gets about 57k tokens alone in a 10 GB budget; a classic 14B model gets about 11k.
+This is why **context follows memory** (`num_ctx: "auto"`): a model is not given a fixed number of tokens. Its context
+is a share of the memory that is free:
+
+```text
+limit   = 90% of the card                      (vram_budget_gb)
+free    = limit − memory of the other models kept beside it − 0.45 GB per extra process
+context = fit_ctx(model, free)                 100% of what its weights leave free, capped by the role
+```
+
+So the context grows when the card is empty and shrinks when another model needs room. Alone under the 11.6 GB limit,
+Bonsai 2 27B (a hybrid model: only 1 layer in 4 keeps a cache) gets about 80k tokens; a classic 14B Q4 model gets
+about 29k. The full model sheet, with speeds and quality, is in the [README](../README.md#model-sheet-12-gb-card).
 
 | Context size | Default | Meaning |
 |---|---|---|
@@ -203,7 +216,7 @@ Eviction is **least recently used first**: the model whose last use is oldest le
 
 ```text
   ⇄ ejected qwen3:14b · loaded qwen2.5-coder:14b (10.4 GB, 16k context) in 4.0s
-  ⇄ loaded glm-ocr:latest (1.9 GB, 4k context) in 5.1s · kept bonsai2:27b (fits in the 10.8 GB limit)
+  ⇄ loaded glm-ocr:latest (1.9 GB, 4k context) in 5.1s · kept bonsai2:27b (fits in the 11.6 GB limit)
 ```
 
 ## 7. Running a worker: shrink, compact, eject, inject
@@ -287,15 +300,16 @@ Models the current step needs are never ejected by the guard. The CPU is never u
 
 ## 9. Context compaction
 
-The context is the model's working memory. When it fills up, older messages are **summarized**, not dropped.
+The context is the model's working memory. Chicken compacts it at three levels, from automatic to long-term:
 
-| When | What happens |
-|---|---|
-| Context above 72% full | Automatic compaction before the next model call |
-| A worker needs room beside the main agent | Forced compaction down to the size that fits (`compact_for_helpers`) |
-| `/compact` | Compaction on demand |
+| Level | When | What it keeps |
+|---|---|---|
+| **Automatic** | the context passes 72% full, before the next model call | a summary of the older part + the most recent 25% word for word |
+| **To make room** | a worker needs memory beside the main agent (`compact_for_helpers`, `/compact auto on\|off`) | the same, compacted down to the size that fits |
+| **Manual** | `/compact` | the same, on demand |
+| **Wiki** | `/save -wiki [name]` | the whole project as linked Markdown pages: `index.md`, `chat.md` (goals, decisions, what's done and next), one page per file |
 
-How it works:
+How the summary works:
 
 1. The most recent part of the conversation (25% of the context) is kept word for word.
 2. Everything older is summarized by the model: goals, decisions, files with paths, facts, what is done and what is left.
@@ -304,8 +318,14 @@ How it works:
 
 The line `↻ context 72% → 26% · auto-compacted` shows each compaction.
 
-Saved conversations are compacted too: on `/load`, outputs that became outdated (a file read later re-read or changed,
-repeated searches, files written long ago) are trimmed, which saved 35–50% of memory on real sessions.
+**The wiki is the strongest compaction.** `/load -wiki name` starts a fresh conversation that reads only `index.md`
+and `chat.md` (usually under 1k tokens) and opens a file's page only when it needs it. Saving again to the same wiki
+updates it: `chat.md` merges old and new, and pages of unchanged files are kept. The wiki is written on request; it is
+not created automatically.
+
+Saved conversations (`/save name`) are compacted too: on `/load`, outputs that became outdated (a file read later
+re-read or changed, repeated searches, files written long ago) are trimmed, which saved 35–50% of memory on real
+sessions.
 
 ## 10. RAM
 
@@ -317,11 +337,11 @@ the model servers and the operating system's file cache. Chicken **monitors** it
   Chicken itself, Ollama (models + server) and the llama.cpp servers.
 
 ```text
-  GPU  9.6 of 12.0 GB used · limit 90% = 10.8 GB
+  GPU  9.6 of 12.9 GB used · limit 90% = 11.6 GB
   ██████████████████████████████████████▒▒░░░░░│░░░░  │ = limit
   ■ bonsai2:27b             7.4 GB  worker · weights 5.9 + context 1.5 · 24k tokens
   ■ qwen3.5:0.8b            1.2 GB  /btw · weights 0.8 + context 0.4 · 4k tokens
-  ▒ other programs 1.0 GB · free under the limit 1.2 GB · free on the card 2.4 GB
+  ▒ other programs 1.0 GB · free under the limit 2.0 GB · free on the card 3.3 GB
   RAM  6.1 of 32.0 GB used · 25.9 GB available · file cache 9.3 GB
     Chicken                      0.2 GB
     Ollama (models + server)     0.6 GB
@@ -347,7 +367,8 @@ flowchart TD
 ```
 
 - Up to `max_tool_rounds` (30) decisions per request. Then Chicken stops and waits: "continue" lets it go on.
-- Every answer, reasoning included, is capped at `max_answer_tokens` (8192) tokens.
+- Every answer, reasoning included, is capped at `max_answer_tokens` (8192) tokens; 16384 when reasoning is on for a
+  llama.cpp model; 600 for `/btw`.
 - Every shell command is killed after `command_timeout` (300 s).
 
 ### The refinement loop (worker, check, fix)
