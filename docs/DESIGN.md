@@ -50,12 +50,15 @@ flowchart TD
 Chicken does not hard-wire roles to models. It keeps a **capability registry** and picks the cheapest model that is
 likely to succeed.
 
-| Tier | Used for |
-|---|---|
-| Orchestrator | Intent, complexity, routing, deciding when the task is done. Small and fast. |
-| Heavy model | Planning, hard coding and debugging, architecture, difficult reviews, recovery after failures. |
-| Specialists | Coding, vision, OCR, summarization and other focused jobs. |
-| Side-channel | `/btw` status questions. Very small, read-only. |
+| Tier | Used for | Default (12 GB GPU) |
+|---|---|---|
+| Orchestrator | Intent, complexity, routing, deciding when the task is done. Small and fast. | `qwen3.5:4b` |
+| Heavy model | Planning, hard coding and debugging, architecture, difficult reviews, recovery after failures. | `bonsai2:27b` |
+| Specialists | Coding, vision, OCR, summarization and other focused jobs. | `qwen2.5-coder:14b`, `gemma3:12b`, `qwen2.5:7b`, `glm-ocr` |
+| Side-channel | `/btw` status questions. Very small, read-only. | `qwen3.5:0.8b` |
+
+The defaults are tuned for a 12 GB card. Every tier can be given other models to fit other hardware
+(see "Using other models" in the README).
 
 Each model in the registry declares its capabilities, an intelligence level, a speed and a memory cost.
 The orchestrator chooses from: required capabilities, expected difficulty, model intelligence, latency, memory
@@ -207,8 +210,9 @@ highest quality.
 |---|---|
 | `ask` | The orchestrator proposes each worker and model; the user confirms, cancels or overrides. |
 | `auto` | Decisions run without confirmation. |
-| `heavy-only` | The heavy model is orchestrator and every worker. Maximum quality, and a baseline. |
-| `heavy-workers` | The small orchestrator stays; every worker runs on the heavy model. Separates routing quality from worker quality. |
+| `bonsai-only` | The heavy model is orchestrator and every worker. Maximum quality, and a baseline. |
+| `bonsai-workers` | The small orchestrator stays; every worker runs on the heavy model. Separates routing quality from worker quality. |
+| `classic` | No orchestrator: the main model works itself with all tools and calls helpers. |
 
 In `ask` mode the proposal looks like this:
 
